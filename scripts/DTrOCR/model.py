@@ -4,13 +4,14 @@ from typing import Optional, Tuple, Dict, Any
 
 from config import DTrOCRConfig
 from processor import DTrOCRProcessor
-from data import DTrOCRLMHeadModelOutput, DTrOCRModelOutput, DTrOCRProcessorOutput
+from data import (DTrOCRLMHeadModelOutput,
+                  DTrOCRModelOutput,
+                  DTrOCRProcessorOutput)
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
 from transformers.generation.logits_process import LogitsProcessorList
-from transformers.models.gpt2.modeling_gpt2 import GPT2Block, GPT2Model
+from transformers import T5EncoderModel
 from transformers.generation.configuration_utils import GenerationConfig
-from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
 from transformers.generation.beam_search import BeamScorer, BeamSearchScorer
 from transformers.generation.stopping_criteria import (
     EosTokenCriteria,
@@ -26,63 +27,84 @@ class DTrOCRModel(nn.Module):
         super().__init__()
         # embeddings
         self.patch_embeddings = ViTPatchEmbeddings(config)
-        self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.token_embedding = nn.Embedding(config.vocab_size,
+                                            config.hidden_size)
+        self.positional_embedding = nn.Embedding(
+            config.max_position_embeddings, config.hidden_size)
 
-        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers)])
+        self.t5_encoder = T5EncoderModel.from_pretrained(
+            config.t5_model).encoder
         self.dropout = nn.Dropout(config.attn_pdrop)
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
+        self.layer_norm = nn.LayerNorm(config.hidden_size,
+                                       eps=config.layer_norm_epsilon)
 
         self._attn_implementation = config._attn_implementation
 
-        # initialise GPT-2 weights from Hugging Face
-        self.initialise_weights(config)
-
     def forward(
         self,
-        pixel_values: torch.Tensor,
-        input_ids: torch.LongTensor,
-        position_ids: Optional[torch.LongTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        pixel_values: torch.Tensor,  # (batch_size, num_channels, height, width)
+        input_ids: torch.LongTensor,  # (batch_size, seq_len)
+        position_ids: Optional[torch.LongTensor] = None,  # (batch_size, seq_len)
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,  # (batch_size, num_heads, seq_len, hidden_size)
+        attention_mask: Optional[torch.Tensor] = None,  # (batch_size, seq_len)
         use_cache: Optional[bool] = False,
     ) -> DTrOCRModelOutput:
-        device = input_ids.device if input_ids is not None else input_ids.device
+
+        device = input_ids.device if input_ids is not None\
+              else input_ids.device
+        
         input_ids = input_ids.view(-1, input_ids.shape[-1])
 
-        # past key values
+        # Past key values initialization
         if past_key_values is None:
             past_length = 0
-            past_key_values = tuple([None] * len(self.hidden_layers))
+            past_key_values = tuple([None] * self.t5_encoder.config.num_layers)
         else:
             past_length = past_key_values[0][0].size(-2)
 
-        patch_embeddings = self.patch_embeddings(pixel_values) if past_length == 0 else None
+        # Get patch embeddings
+        patch_embeddings = self.patch_embeddings(pixel_values)\
+            if past_length == 0 else None
+        
         token_embeddings = self.token_embedding(input_ids)
 
+        # Concatenate patch and token embeddings
         if patch_embeddings is not None:
-            patch_and_token_embeddings = torch.concat([patch_embeddings, token_embeddings], dim=-2)
+            patch_and_token_embeddings = torch.cat(
+                [patch_embeddings, token_embeddings], dim=-2)
         else:
             patch_and_token_embeddings = token_embeddings
+
         input_shape = patch_and_token_embeddings.shape
 
+        # Position embeddings
         if position_ids is None or past_length == 0:
-            position_ids = torch.arange(past_length, input_shape[1] + past_length, dtype=torch.long, device=device)
+            position_ids = torch.arange(
+                past_length, input_shape[1] + past_length,
+                dtype=torch.long, device=device)
+            
             position_ids = position_ids.unsqueeze(0)
         else:
-            position_ids = torch.ones_like(position_ids, device=position_ids.device) * past_length
+            position_ids = torch.ones_like(
+                position_ids,
+                device=position_ids.device) * past_length
+        
         position_embeddings = self.positional_embedding(position_ids)
 
+        # Add patch/token embeddings with positional embeddings
         hidden_states = patch_and_token_embeddings + position_embeddings
         hidden_states = self.dropout(hidden_states)
 
-        # attention mask
+        # Attention mask
         if attention_mask is not None:
-            attention_mask = torch.concat(
+            attention_mask = torch.cat(
                 [
                     torch.ones(
                         attention_mask.shape[0],
-                        patch_embeddings.shape[-2] if patch_embeddings is not None else past_length,
+
+                        patch_embeddings.shape[-2] if patch_embeddings
+                        is not None else past_length,
+                        
                         dtype=attention_mask.dtype,
                         device=attention_mask.device
                     ),
@@ -92,39 +114,24 @@ class DTrOCRModel(nn.Module):
             if self._attn_implementation == "flash_attention_2":
                 attention_mask = attention_mask if 0 in attention_mask else None
             else:
-                attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
-                    attention_mask=attention_mask,
-                    input_shape=(input_shape[0], input_shape[-2]),
-                    inputs_embeds=patch_and_token_embeddings,
-                    past_key_values_length=past_length,
-                )
+                raise ValueError('Incorrect _attn_implementation,'
+                                 'supported only "flash_attention_2"')
 
-        presents = () if use_cache else None
-        for hidden_layer, layer_past in zip(self.hidden_layers, past_key_values):
-            outputs = hidden_layer(
-                hidden_states,
-                layer_past=layer_past,
-                attention_mask=attention_mask,
-                use_cache=use_cache
-            )
-            hidden_states = outputs[0]
-            if use_cache is True:
-                presents = presents + (outputs[1],)
+        # Forward pass through T5 encoder layers
+        encoder_outputs = self.t5_encoder(
+            inputs_embeds=hidden_states,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+        )
+        hidden_states = encoder_outputs.last_hidden_state
+        presents = encoder_outputs.past_key_values
 
+        # Apply final layer normalization
         hidden_states = self.layer_norm(hidden_states)
 
-        return DTrOCRModelOutput(hidden_states=hidden_states, past_key_values=presents)
-
-    def initialise_weights(self, config: DTrOCRConfig) -> None:
-        # load pre-trained GPT-2
-        pretrained_gpt2 = GPT2Model.from_pretrained(config.gpt2_hf_model)
-
-        # copy hidden layer weights
-        for hidden_layer, pretrained_hidden_layer in zip(self.hidden_layers, pretrained_gpt2.h):
-            hidden_layer.load_state_dict(pretrained_hidden_layer.state_dict())
-
-        # token embeddings
-        self.token_embedding.load_state_dict(pretrained_gpt2.wte.state_dict())
+        return DTrOCRModelOutput(hidden_states=hidden_states,
+                                 past_key_values=presents)
 
 
 class DTrOCRLMHeadModel(nn.Module):
@@ -133,10 +140,12 @@ class DTrOCRLMHeadModel(nn.Module):
         self.config = config
 
         self.transformer = DTrOCRModel(config)
-        self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.language_model_head = nn.Linear(config.hidden_size,
+                                             config.vocab_size, bias=False)
 
         image_size, patch_size = config.image_size, config.patch_size
-        self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
+        self.image_embedding_length = int(
+            (image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
 
     def forward(
         self,
@@ -167,10 +176,12 @@ class DTrOCRLMHeadModel(nn.Module):
             shift_labels = labels[..., 1:].contiguous()
 
             loss_fct = nn.CrossEntropyLoss(reduction="none")
-            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss_fct(shift_logits.view(
+                -1, shift_logits.size(-1)), shift_labels.view(-1))
 
             label_matches = shift_labels.view(-1) == torch.argmax(
-                torch.nn.functional.softmax(shift_logits.view(-1, shift_logits.size(-1)), dim=-1), dim=-1
+                torch.nn.functional.softmax(shift_logits.view(
+                    -1, shift_logits.size(-1)), dim=-1), dim=-1
             )
 
             # reduce loss
