@@ -1,9 +1,10 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple
 
 
 class DTrOCRConfig:
     def __init__(
         self,
+        vit_hf_model: str = 'google/vit-base-patch16-224',
         t5_model: str = 't5-small',
         vocab_size: Optional[int] = 32128,
         max_position_embeddings: Optional[int] = 256,
@@ -34,7 +35,7 @@ class DTrOCRConfig:
         self.attn_pdrop = attn_pdrop
         self.layer_norm_epsilon = layer_norm_epsilon
         self._attn_implementation = attn_implementation
-
+        self.vit_hf_model = vit_hf_model
         # T5 config values
         self.t5_model = t5_model
         self.feed_forward_proj = feed_forward_proj
