@@ -218,11 +218,11 @@ class DTrOCRLMHeadModel(nn.Module):
         }
         generation_config = GenerationConfig(
             max_new_tokens=1,
-            pad_token_id=processor.tokeniser.pad_token_id,
-            eos_token_id=processor.tokeniser.eos_token_id,
-            bos_token_id=processor.tokeniser.bos_token_id,
+            pad_token_id=processor.tokenizer.pad_token_id,
+            eos_token_id=processor.tokenizer.eos_token_id,
+            bos_token_id=processor.tokenizer.bos_token_id,
             num_beams=num_beams,
-            max_length=processor.tokeniser.model_max_length
+            max_length=processor.tokenizer.model_max_length
         )
 
         # interleave input_ids with `num_beams` additional sequences per batch
@@ -457,7 +457,7 @@ class DTrOCRLMHeadModel(nn.Module):
                     "stop strings, you must pass the model's tokenizer to the `tokenizer` argument of `generate`."
                 )
             criteria.append(StopStringCriteria(
-                stop_strings=generation_config.stop_strings, tokenizer=processor.tokeniser)
+                stop_strings=generation_config.stop_strings, tokenizer=processor.tokenizer)
             )
         if generation_config.eos_token_id is not None:
             criteria.append(EosTokenCriteria(eos_token_id=generation_config.eos_token_id))
