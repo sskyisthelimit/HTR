@@ -41,13 +41,13 @@ class DTrOCRProcessor:
         *args,
         **kwargs
     ) -> DTrOCRProcessorOutput:
-        text_inputs = self.tokeniser(
+        text_inputs = self.tokenizer(
             texts, padding=padding, add_special_tokens=True,
             *args, **kwargs
         ) if texts is not None else None
 
         image_inputs = self.vit_processor(
-            images, return_tensors="pt", input_data_format=input_data_format,
+            images, input_data_format=input_data_format,
             *args, **kwargs
         ) if images is not None else None
 
