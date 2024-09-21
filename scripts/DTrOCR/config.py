@@ -9,7 +9,7 @@ class DTrOCRConfig:
         vocab_size: Optional[int] = 32128,
         max_position_embeddings: Optional[int] = 256,
         hidden_size: Optional[int] = 512,
-        num_hidden_layers: Optional[int] = 12,
+        num_hidden_layers: Optional[int] = 8,
         feed_forward_proj: str = "gated-gelu",
         num_attention_heads: Optional[int] = 12,
         patch_size: Tuple[int] = (4, 8),  # (h, w)
@@ -23,7 +23,6 @@ class DTrOCRConfig:
     ):
 
         self.hidden_size = hidden_size
-        self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.patch_size = patch_size
         self.image_size = image_size
@@ -39,3 +38,4 @@ class DTrOCRConfig:
         # T5 config values
         self.t5_model = t5_model
         self.feed_forward_proj = feed_forward_proj
+        self.num_layers = num_hidden_layers
