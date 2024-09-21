@@ -4,13 +4,12 @@ from typing import Optional, Tuple, Dict, Any
 
 from config import DTrOCRConfig
 from processor import DTrOCRProcessor
-from data import (DTrOCRLMHeadModelOutput,
-                  DTrOCRModelOutput,
-                  DTrOCRProcessorOutput)
+from data import DTrOCRLMHeadModelOutput, DTrOCRModelOutput, DTrOCRProcessorOutput
+import pytorch_lightning as pl
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
 from transformers.generation.logits_process import LogitsProcessorList
-from transformers import T5EncoderModel
+from transformers import AutoTokenizer, T5ForConditionalGeneration, T5Config
 from transformers.generation.configuration_utils import GenerationConfig
 from transformers.generation.beam_search import BeamScorer, BeamSearchScorer
 from transformers.generation.stopping_criteria import (
@@ -22,130 +21,130 @@ from transformers.generation.stopping_criteria import (
 )
 
 
-class DTrOCRModel(nn.Module):
+class DTrOCRModel(pl.LightningModule):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
         # embeddings
         self.patch_embeddings = ViTPatchEmbeddings(config)
-        self.token_embedding = nn.Embedding(config.vocab_size,
-                                            config.hidden_size)
-        self.positional_embedding = nn.Embedding(
-            config.max_position_embeddings, config.hidden_size)
+        self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
-        self.t5_encoder = T5EncoderModel.from_pretrained(
-            config.t5_model).encoder
+        self.LM = T5ForConditionalGeneration(T5Config()).from_pretrained("google-t5/t5-small")
         self.dropout = nn.Dropout(config.attn_pdrop)
-        self.layer_norm = nn.LayerNorm(config.hidden_size,
-                                       eps=config.layer_norm_epsilon)
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
 
         self._attn_implementation = config._attn_implementation
 
     def forward(
         self,
-        pixel_values: torch.Tensor,  # (batch_size, num_channels, height, width)
-        input_ids: torch.LongTensor,  # (batch_size, seq_len)
-        position_ids: Optional[torch.LongTensor] = None,  # (batch_size, seq_len)
-        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,  # (batch_size, num_heads, seq_len, hidden_size)
-        attention_mask: Optional[torch.Tensor] = None,  # (batch_size, seq_len)
+        pixel_values: torch.Tensor,
+        input_ids: torch.LongTensor,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_values: Optional[Tuple[Tuple[torch.Tensor]]] = None,
+        attention_mask: Optional[torch.Tensor] = None,
         use_cache: Optional[bool] = False,
     ) -> DTrOCRModelOutput:
-
-        device = input_ids.device if input_ids is not None\
-              else input_ids.device
-        
+        device = input_ids.device if input_ids is not None else input_ids.device
         input_ids = input_ids.view(-1, input_ids.shape[-1])
 
-        # Past key values initialization
+        # past key values
         if past_key_values is None:
             past_length = 0
-            past_key_values = tuple([None] * self.t5_encoder.config.num_layers)
+            past_key_values = tuple([None] * 6)
         else:
             past_length = past_key_values[0][0].size(-2)
 
-        # Get patch embeddings
-        patch_embeddings = self.patch_embeddings(pixel_values)\
-            if past_length == 0 else None
-        
+        patch_embeddings = self.patch_embeddings(pixel_values) if past_length == 0 else None
         token_embeddings = self.token_embedding(input_ids)
 
-        # Concatenate patch and token embeddings
         if patch_embeddings is not None:
-            patch_and_token_embeddings = torch.cat(
-                [patch_embeddings, token_embeddings], dim=-2)
+            patch_and_token_embeddings = torch.concat([patch_embeddings, token_embeddings], dim=-2)
         else:
             patch_and_token_embeddings = token_embeddings
-
         input_shape = patch_and_token_embeddings.shape
 
-        # Position embeddings
         if position_ids is None or past_length == 0:
-            position_ids = torch.arange(
-                past_length, input_shape[1] + past_length,
-                dtype=torch.long, device=device)
-            
+            position_ids = torch.arange(past_length, input_shape[1] + past_length, dtype=torch.long, device=device)
             position_ids = position_ids.unsqueeze(0)
         else:
-            position_ids = torch.ones_like(
-                position_ids,
-                device=position_ids.device) * past_length
-        
+            position_ids = torch.ones_like(position_ids, device=position_ids.device) * past_length
         position_embeddings = self.positional_embedding(position_ids)
 
-        # Add patch/token embeddings with positional embeddings
         hidden_states = patch_and_token_embeddings + position_embeddings
         hidden_states = self.dropout(hidden_states)
 
-        # Attention mask
+        # attention mask
         if attention_mask is not None:
-            attention_mask = torch.cat(
+            attention_mask = torch.concat(
                 [
                     torch.ones(
                         attention_mask.shape[0],
-
-                        patch_embeddings.shape[-2] if patch_embeddings
-                        is not None else past_length,
-                        
+                        patch_embeddings.shape[-2] if patch_embeddings is not None else past_length,
                         dtype=attention_mask.dtype,
                         device=attention_mask.device
                     ),
                     attention_mask
                 ], dim=-1
             )
-            if self._attn_implementation == "flash_attention_2":
-                attention_mask = attention_mask if 0 in attention_mask else None
-            else:
-                raise ValueError('Incorrect _attn_implementation,'
-                                 'supported only "flash_attention_2"')
 
-        # Forward pass through T5 encoder layers
-        encoder_outputs = self.t5_encoder(
-            inputs_embeds=hidden_states,
-            attention_mask=attention_mask,
+            attention_mask = attention_mask if 0 in attention_mask else None
+            
+        presents = () if use_cache else None
+        outputs = self.LM(
+            hidden_states,
             past_key_values=past_key_values,
-            use_cache=use_cache,
+            attention_mask=attention_mask,
+            use_cache=use_cache
         )
-        hidden_states = encoder_outputs.last_hidden_state
-        presents = encoder_outputs.past_key_values
+        hidden_states = outputs[0]
+        if use_cache is True:
+            presents = presents + (outputs[1],)
 
-        # Apply final layer normalization
         hidden_states = self.layer_norm(hidden_states)
 
-        return DTrOCRModelOutput(hidden_states=hidden_states,
-                                 past_key_values=presents)
+        return DTrOCRModelOutput(hidden_states=hidden_states, past_key_values=presents)
 
 
-class DTrOCRLMHeadModel(nn.Module):
+class DTrOCRLMHeadModel(pl.LightningModule):
     def __init__(self, config: DTrOCRConfig):
         super().__init__()
         self.config = config
 
         self.transformer = DTrOCRModel(config)
-        self.language_model_head = nn.Linear(config.hidden_size,
-                                             config.vocab_size, bias=False)
+        self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         image_size, patch_size = config.image_size, config.patch_size
-        self.image_embedding_length = int(
-            (image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
+        self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
+   
+    def training_step(self, inputs):
+        outputs = self.forward(**inputs)
+        loss = outputs.loss
+
+        self.log_dict(
+            {
+                "train_loss": loss,
+            },
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+        )
+        
+        return {"loss": loss, "scores": outputs.accuracy, "y": outputs.logits}
+    
+    def validation_step(self, inputs):
+        outputs = self.forward(**inputs)
+        loss = outputs.loss
+        self.log("val_loss", loss)
+        return loss
+
+    def test_step(self, inputs):
+        outputs = self.forward(**inputs)
+        loss = outputs.loss
+        self.log("test_loss", loss)
+        return {"loss": loss, "y": outputs.logits}
+    
+    def configure_optimizers(self):
+        return torch.optim.Adam(params=self.parameters(), lr=1e-4)
 
     def forward(
         self,
@@ -176,12 +175,10 @@ class DTrOCRLMHeadModel(nn.Module):
             shift_labels = labels[..., 1:].contiguous()
 
             loss_fct = nn.CrossEntropyLoss(reduction="none")
-            loss = loss_fct(shift_logits.view(
-                -1, shift_logits.size(-1)), shift_labels.view(-1))
+            loss = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
 
             label_matches = shift_labels.view(-1) == torch.argmax(
-                torch.nn.functional.softmax(shift_logits.view(
-                    -1, shift_logits.size(-1)), dim=-1), dim=-1
+                torch.nn.functional.softmax(shift_logits.view(-1, shift_logits.size(-1)), dim=-1), dim=-1
             )
 
             # reduce loss
@@ -218,11 +215,11 @@ class DTrOCRLMHeadModel(nn.Module):
         }
         generation_config = GenerationConfig(
             max_new_tokens=1,
-            pad_token_id=processor.tokenizer.pad_token_id,
-            eos_token_id=processor.tokenizer.eos_token_id,
-            bos_token_id=processor.tokenizer.bos_token_id,
+            pad_token_id=processor.tokeniser.pad_token_id,
+            eos_token_id=processor.tokeniser.eos_token_id,
+            bos_token_id=processor.tokeniser.bos_token_id,
             num_beams=num_beams,
-            max_length=processor.tokenizer.model_max_length
+            max_length=processor.tokeniser.model_max_length
         )
 
         # interleave input_ids with `num_beams` additional sequences per batch
@@ -457,7 +454,7 @@ class DTrOCRLMHeadModel(nn.Module):
                     "stop strings, you must pass the model's tokenizer to the `tokenizer` argument of `generate`."
                 )
             criteria.append(StopStringCriteria(
-                stop_strings=generation_config.stop_strings, tokenizer=processor.tokenizer)
+                stop_strings=generation_config.stop_strings, tokenizer=processor.tokeniser)
             )
         if generation_config.eos_token_id is not None:
             criteria.append(EosTokenCriteria(eos_token_id=generation_config.eos_token_id))
