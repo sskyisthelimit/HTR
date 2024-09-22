@@ -9,8 +9,9 @@ import pytorch_lightning as pl
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
 from transformers.generation.logits_process import LogitsProcessorList
-from transformers import AutoTokenizer, T5ForConditionalGeneration, T5Config
+from transformers.models.gpt2.modeling_gpt2 import GPT2Block, GPT2Model
 from transformers.generation.configuration_utils import GenerationConfig
+from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask_for_sdpa
 from transformers.generation.beam_search import BeamScorer, BeamSearchScorer
 from transformers.generation.stopping_criteria import (
     EosTokenCriteria,
@@ -29,11 +30,14 @@ class DTrOCRModel(pl.LightningModule):
         self.token_embedding = nn.Embedding(config.vocab_size, config.hidden_size)
         self.positional_embedding = nn.Embedding(config.max_position_embeddings, config.hidden_size)
 
-        self.LM = T5ForConditionalGeneration(T5Config()).from_pretrained("google-t5/t5-small")
+        self.hidden_layers = nn.ModuleList([GPT2Block(config, layer_idx=i) for i in range(config.num_hidden_layers)])
         self.dropout = nn.Dropout(config.attn_pdrop)
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_epsilon)
 
         self._attn_implementation = config._attn_implementation
+
+        # initialise GPT-2 weights from Hugging Face
+        self.initialise_weights(config)
 
     def forward(
         self,
@@ -50,7 +54,7 @@ class DTrOCRModel(pl.LightningModule):
         # past key values
         if past_key_values is None:
             past_length = 0
-            past_key_values = tuple([None] * 6)
+            past_key_values = tuple([None] * len(self.hidden_layers))
         else:
             past_length = past_key_values[0][0].size(-2)
 
@@ -86,23 +90,42 @@ class DTrOCRModel(pl.LightningModule):
                     attention_mask
                 ], dim=-1
             )
+            if self._attn_implementation == "flash_attention_2":
+                attention_mask = attention_mask if 0 in attention_mask else None
+            else:
+                attention_mask = _prepare_4d_causal_attention_mask_for_sdpa(
+                    attention_mask=attention_mask,
+                    input_shape=(input_shape[0], input_shape[-2]),
+                    inputs_embeds=patch_and_token_embeddings,
+                    past_key_values_length=past_length,
+                )
 
-            attention_mask = attention_mask if 0 in attention_mask else None
-            
         presents = () if use_cache else None
-        outputs = self.LM(
-            hidden_states,
-            past_key_values=past_key_values,
-            attention_mask=attention_mask,
-            use_cache=use_cache
-        )
-        hidden_states = outputs[0]
-        if use_cache is True:
-            presents = presents + (outputs[1],)
+        for hidden_layer, layer_past in zip(self.hidden_layers, past_key_values):
+            outputs = hidden_layer(
+                hidden_states,
+                layer_past=layer_past,
+                attention_mask=attention_mask,
+                use_cache=use_cache
+            )
+            hidden_states = outputs[0]
+            if use_cache is True:
+                presents = presents + (outputs[1],)
 
         hidden_states = self.layer_norm(hidden_states)
 
         return DTrOCRModelOutput(hidden_states=hidden_states, past_key_values=presents)
+
+    def initialise_weights(self, config: DTrOCRConfig) -> None:
+        # load pre-trained GPT-2
+        pretrained_gpt2 = GPT2Model.from_pretrained(config.gpt2_hf_model)
+
+        # copy hidden layer weights
+        for hidden_layer, pretrained_hidden_layer in zip(self.hidden_layers, pretrained_gpt2.h):
+            hidden_layer.load_state_dict(pretrained_hidden_layer.state_dict())
+
+        # token embeddings
+        self.token_embedding.load_state_dict(pretrained_gpt2.wte.state_dict())
 
 
 class DTrOCRLMHeadModel(pl.LightningModule):
@@ -114,8 +137,9 @@ class DTrOCRLMHeadModel(pl.LightningModule):
         self.language_model_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
         image_size, patch_size = config.image_size, config.patch_size
+
         self.image_embedding_length = int((image_size[0] / patch_size[0]) * (image_size[1] / patch_size[1]))
-   
+
     def training_step(self, inputs):
         outputs = self.forward(**inputs)
         loss = outputs.loss
