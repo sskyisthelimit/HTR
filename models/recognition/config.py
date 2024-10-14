@@ -11,8 +11,8 @@ class DTrOCRConfig:
         hidden_size: Optional[int] = 768,
         num_hidden_layers: Optional[int] = 8,
         num_attention_heads: Optional[int] = 12,
-        patch_size: Optional[Union[Tuple[int], List[int]]] = (4, 8),      # (height, width)
-        image_size: Optional[Union[Tuple[int], List[int]]] = (32, 128),   # (height, width)
+        patch_size: Optional[Union[Tuple[int], List[int]]] = (4, 8),
+        image_size: Optional[Union[Tuple[int], List[int]]] = (32, 128),
         num_channels: Optional[int] = 3,
         resid_pdrop: Optional[float] = 0.1,
         embd_pdrop: Optional[float] = 0.1,

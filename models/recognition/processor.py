@@ -2,13 +2,15 @@ from transformers import GPT2Tokenizer, AutoImageProcessor
 
 from PIL import Image
 from typing import List, Union
-
 from config import DTrOCRConfig
 from data import DTrOCRProcessorOutput
 
 
 class DTrOCRProcessor:
-    def __init__(self, config: DTrOCRConfig, add_bos_token: bool = False, add_eos_token: bool = False):
+    def __init__(self, config: DTrOCRConfig,
+                 add_bos_token: bool = False,
+                 add_eos_token: bool = False):
+
         self.vit_processor = AutoImageProcessor.from_pretrained(
             config.vit_hf_model,
             size={
@@ -21,7 +23,8 @@ class DTrOCRProcessor:
             config.gpt2_hf_model,
             add_bos_token=add_bos_token,
             model_max_length=config.max_position_embeddings - int(
-                (config.image_size[0] / config.patch_size[0]) * (config.image_size[1] / config.patch_size[1])
+                (config.image_size[0] / config.patch_size[0]) *
+                (config.image_size[1] / config.patch_size[1])
             )
         )
         self.tokeniser.pad_token = self.tokeniser.bos_token
@@ -51,14 +54,22 @@ class DTrOCRProcessor:
         ) if images is not None else None
 
         return DTrOCRProcessorOutput(
-            pixel_values=image_inputs["pixel_values"] if images is not None else None,
-            input_ids=text_inputs['input_ids'] if texts is not None else None,
-            attention_mask=text_inputs['attention_mask'] if texts is not None else None,
-            labels=text_inputs['input_ids'] if texts is not None and return_labels else None
+            pixel_values=image_inputs["pixel_values"]
+            if images is not None else None,
+
+            input_ids=text_inputs['input_ids']
+            if texts is not None else None,
+
+            attention_mask=text_inputs['attention_mask']
+            if texts is not None else None,
+
+            labels=text_inputs['input_ids']
+            if texts is not None and return_labels else None
         )
 
 
-def modified_build_inputs_with_special_tokens(self, token_ids_0, token_ids_1=None):
+def modified_build_inputs_with_special_tokens(self, token_ids_0,
+                                              token_ids_1=None):
     if self.add_bos_token:
         bos_token_ids = [self.bos_token_id]
     else:

@@ -22,6 +22,9 @@ class DTrOCRLMHeadModelOutput:
 @dataclass
 class DTrOCRProcessorOutput:
     pixel_values: Optional[torch.FloatTensor] = None
-    input_ids: Optional[Union[torch.LongTensor, np.ndarray, List[int]]] = None
-    attention_mask: Optional[Union[torch.FloatTensor, np.ndarray, List[int]]] = None
-    labels: Optional[Union[torch.LongTensor, np.ndarray, List[int]]] = None
+    input_ids: Optional[Union[torch.LongTensor,
+                              np.ndarray, List[int]]] = None
+    attention_mask: Optional[Union[torch.FloatTensor,
+                                   np.ndarray, List[int]]] = None
+    labels: Optional[Union[torch.LongTensor,
+                           np.ndarray, List[int]]] = None
