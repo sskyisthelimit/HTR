@@ -113,3 +113,6 @@ cython_debug/
 
 # ENV files
 data/preparation/.env
+
+*.ckpt
+*.pt

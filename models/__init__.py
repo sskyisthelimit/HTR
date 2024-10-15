@@ -1,1 +1,1 @@
-__all__ = ['DTrOCR']
+__all__ = ['detection', 'recognition']
