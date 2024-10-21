@@ -1,22 +1,31 @@
-from config import DTrOCRConfig
-from data import DTrOCRProcessorOutput
-from processor import DTrOCRProcessor 
-from model import DTrOCRLMHeadModel
+from models.recognition.config import DTrOCRConfig
+from models.recognition.data import DTrOCRProcessorOutput
+from models.recognition.processor import DTrOCRProcessor 
+from models.recognition.model import DTrOCRLMHeadModel
+import torch
 
 import numpy as np
 
 
 class Recognizer:
     def __init__(self, device, model_ckpt_path):
-        config = DTrOCRConfig()
-        self.test_processor = DTrOCRProcessor(config)
+        if not torch.cuda.is_available():
+            raise ValueError(
+                "CUDA is not available, detector WON'T BE initialized")
+        
+        try:
+            config = DTrOCRConfig()
+            self.test_processor = DTrOCRProcessor(config)
 
-        self.recognition_model = DTrOCRLMHeadModel.load_from_checkpoint(
-            model_ckpt_path, config=config)
+            self.recognition_model = DTrOCRLMHeadModel.load_from_checkpoint(
+                model_ckpt_path, config=config)
 
-        self.config = config
+            self.config = config
 
-        self.recognition_model.to(device)
+            self.recognition_model.to(device)
+
+        except Exception as e:
+            print(f"Error loading model: {e}")
 
     def generate_prediction(self, image):
         inputs = self.test_processor(
