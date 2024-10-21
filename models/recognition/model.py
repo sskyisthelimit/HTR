@@ -4,11 +4,11 @@ from typing import Optional, Tuple, Dict, Any
 
 import pytorch_lightning as pl
 
-from config import DTrOCRConfig
-from data import (DTrOCRModelOutput,
-                  DTrOCRLMHeadModelOutput,
-                  DTrOCRProcessorOutput)
-from processor import DTrOCRProcessor
+from models.recognition.config import DTrOCRConfig
+from models.recognition.data import (DTrOCRModelOutput,
+                                     DTrOCRLMHeadModelOutput,
+                                     DTrOCRProcessorOutput)
+from models.recognition.processor import DTrOCRProcessor
 
 from transformers.models.vit.modeling_vit import ViTPatchEmbeddings
 from transformers.generation.logits_process import LogitsProcessorList

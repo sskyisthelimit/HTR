@@ -2,8 +2,8 @@ from transformers import GPT2Tokenizer, AutoImageProcessor
 
 from PIL import Image
 from typing import List, Union
-from config import DTrOCRConfig
-from data import DTrOCRProcessorOutput
+from models.recognition.config import DTrOCRConfig
+from models.recognition.data import DTrOCRProcessorOutput
 
 
 class DTrOCRProcessor:
