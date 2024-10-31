@@ -1,7 +1,6 @@
 ultralytics==8.3.13
 pytorch_lightning==2.4.0
 transformers==4.44.2
-pillow==10.4.0
 fastapi[standard]==0.115.0
 uvicorn[standard]==0.31.0
 opencv-python==4.8.0.76
