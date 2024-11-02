@@ -117,3 +117,4 @@ data/preparation/.env
 *.ckpt
 *.pt
 **/weights/
+.terraform*
