@@ -2,6 +2,30 @@ resource "aws_ecr_repository" "htr_api_repo" {
   name = "htr-api-repo"
 }
 
+resource "aws_ecr_lifecycle_policy" "ecr_lifecycle_policy" {
+  repository = aws_ecr_repository.htr_api_repo.name
+
+  policy = <<EOF
+  {
+      "rules": [
+          {
+              "rulePriority": 1,
+              "description": "Keep only the last 2 images",
+              "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 2
+              },
+              "action": {
+                  "type": "expire"
+              }
+          }
+      ]
+  }
+  EOF
+}
+
+
 data "aws_iam_policy_document" "ecr_access_policy_doc" {
   statement {
     sid    = "AllowECRAccess"
