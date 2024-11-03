@@ -65,35 +65,3 @@ resource "aws_iam_role_policy_attachment" "ec2_ecr_policy_attachment" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = aws_iam_policy.ecr_access_policy.arn
 }
-
-resource "aws_iam_user_policy" "cost_management_policy" {
-  name   = "CostManagementPolicy"
-  user   = aws_iam_user.my_user.name
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = [
-          "aws-portal:ViewBilling",              # View billing details
-          "ce:GetCostAndUsage",                  # View cost and usage reports
-          "ce:GetCostForecast",                  # View cost forecasts
-          "ce:GetReservationCoverage",           # View reservation coverage
-          "ce:GetReservationUtilization",        # View reservation utilization
-          "ce:GetRightsizingRecommendation",     # View rightsizing recommendations
-          "ce:GetSavingsPlansCoverage",          # View savings plan coverage
-          "ce:GetSavingsPlansUtilization",       # View savings plan utilization
-          "ce:ListCostCategoryDefinitions",      # List cost categories
-          "cur:DescribeReportDefinitions",       # View cost and usage report definitions
-          "cur:GetCostAndUsageReport",           # Access detailed cost and usage reports
-          "ce:GetDimensionValues",               # View dimension values for cost reports
-          "ce:GetCostCategories",                # View cost categories
-          "servicecatalog:SearchProvisionedProducts", # View used services in console
-          "tag:GetResources"                     # View resource tagging information
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
