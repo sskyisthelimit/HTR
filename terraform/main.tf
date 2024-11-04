@@ -65,3 +65,10 @@ resource "aws_iam_role_policy_attachment" "ec2_ecr_policy_attachment" {
   role       = aws_iam_role.ec2_role.name
   policy_arn = aws_iam_policy.ecr_access_policy.arn
 }
+
+resource "aws_route53_zone" "htr_api_zone" {
+  name = "htr-api.xyz"
+  tags = {
+    Name = "htr-api-zone"
+  }
+}
