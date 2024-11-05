@@ -72,3 +72,63 @@ resource "aws_route53_zone" "htr_api_zone" {
     Name = "htr-api-zone"
   }
 }
+
+resource "aws_vpc" "htr_api_vpc" {
+  cidr_block = "10.0.0.0/16"
+  tags = {
+    Name = "htr-api-vpc" 
+  }
+}
+
+resource "aws_subnet" "htr_api_subnet" {
+  vpc_id = aws_vpc.htr_api_vpc.id
+  cidr_block = "10.0.1.0/24"
+  availability_zone = "eu-central-1c"
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "htr-api-subnet"
+  }
+
+}
+
+resource "aws_internet_gateway" "htr_api_igw" {
+  vpc_id = aws_vpc.htr_api_vpc.id
+  tags = {
+    Name = "htr-api-igw"
+  }
+}
+
+resource "aws_route_table" "htr_api_route_table" {
+  vpc_id = aws_vpc.htr_api_vpc.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.htr_api_igw.id
+  }
+}
+
+resource "aws_route_table_association" "htr_api_route_table_assoc" {
+  subnet_id = aws_subnet.htr_api_subnet.id
+  route_table_id = aws_route_table.htr_api_route_table.id
+}
+
+resource "aws_security_group" "htr_api_sg" {  
+  vpc_id = aws_vpc.htr_api_vpc.id
+  tags = {
+    Name = "htr-api-sg"
+  }
+
+  ingress {
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+} 
+
