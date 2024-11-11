@@ -117,3 +117,5 @@ data/preparation/.env
 # Ignore models that were saved locally (until I figured out the model registry)
 *.pt
 *.ckpt
+terraform/*
+models/detection/weights/*
