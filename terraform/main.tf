@@ -132,3 +132,78 @@ resource "aws_security_group" "htr_api_sg" {
   }
 } 
 
+resource "aws_eip" "htr_api_eip" {
+  domain = "vpc"
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "htr-api-ec2-instance-profile"
+  role = aws_iam_role.ec2_role.name
+}
+
+resource "aws_launch_template" "htr_api_launch_template" {
+  name_prefix   = "htr-api-launch-template"
+  image_id      = "ami-0c79aa53926826e57"
+  instance_type = "g4dn.xlarge"
+  key_name      = "htr-api-key"
+  
+  iam_instance_profile {
+    name = aws_iam_instance_profile.ec2_profile.name
+  }
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [aws_security_group.htr_api_sg.id]
+    subnet_id                   = aws_subnet.htr_api_subnet.id
+  }
+
+  user_data = base64encode(<<EOF
+#!/bin/bash
+sudo apt-get update
+sudo apt-get install -y docker.io
+sudo systemctl start docker
+sudo systemctl enable docker
+
+$(aws ecr get-login --no-include-email --region ${var.region})
+docker pull ${aws_ecr_repository.htr_api_repo.repository_url}:latest
+docker run -d -p 8000:8000 ${aws_ecr_repository.htr_api_repo.repository_url}:latest
+
+aws ec2 associate-address --allocation-id ${aws_eip.htr_api_eip.id} --instance-id $(curl -s http://169.254.169.254/latest/meta-data/instance-id) --allow-reassociation
+EOF
+)
+
+}
+
+resource "aws_autoscaling_group" "htr_api_asg" {
+  desired_capacity     = 1
+  max_size             = 1
+  min_size             = 1
+  vpc_zone_identifier  = [aws_subnet.htr_api_subnet.id]
+  health_check_grace_period = 300
+  health_check_type    = "EC2"
+  tag {
+    key                 = "Name"
+    value               = "htr-api-backend"
+    propagate_at_launch = true
+  }
+  mixed_instances_policy {
+    instances_distribution {
+      spot_max_price = "0.23"
+    }
+
+    launch_template {
+      launch_template_specification {
+        launch_template_id = aws_launch_template.htr_api_launch_template.id
+        version = "$Latest"
+      }
+    }
+  }
+}
+
+resource "aws_route53_record" "htr_api_dns_record" {
+  zone_id = aws_route53_zone.htr_api_zone.zone_id
+  name    = "htr-api"
+  type    = "A"
+  ttl     = 300
+  records = [aws_eip.htr_api_eip.public_ip]
+}
